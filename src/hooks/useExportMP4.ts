@@ -3,6 +3,7 @@ import { useCallback, useRef } from "react";
 export interface ExportOptions {
   canvas: HTMLCanvasElement;
   fps?: number;
+  transparent?: boolean;
   onStart?: () => void;
   onEnd?: (url: string) => void;
   onError?: (msg: string) => void;
@@ -13,13 +14,18 @@ export function useExportMP4() {
   const chunksRef = useRef<Blob[]>([]);
 
   const startRecording = useCallback((opts: ExportOptions) => {
-    const { canvas, fps = 30, onStart, onEnd, onError } = opts;
+    const { canvas, fps = 30, transparent = false, onStart, onEnd, onError } = opts;
 
-    const mimeType = MediaRecorder.isTypeSupported("video/mp4")
-      ? "video/mp4"
-      : MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-      ? "video/webm;codecs=vp9"
-      : "video/webm";
+    // Для прозрачного фона — WebM VP9 с alpha каналом
+    const mimeType = transparent
+      ? (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+          ? "video/webm;codecs=vp9"
+          : "video/webm")
+      : (MediaRecorder.isTypeSupported("video/mp4")
+          ? "video/mp4"
+          : MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+          ? "video/webm;codecs=vp9"
+          : "video/webm");
 
     const stream = canvas.captureStream(fps);
     const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
@@ -33,9 +39,10 @@ export function useExportMP4() {
       const blob = new Blob(chunksRef.current, { type: mimeType });
       const url = URL.createObjectURL(blob);
       const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+      const suffix = transparent ? "_transparent" : "";
       const a = document.createElement("a");
       a.href = url;
-      a.download = `handwriting_animation.${ext}`;
+      a.download = `handwriting_animation${suffix}.${ext}`;
       a.click();
       URL.revokeObjectURL(url);
       onEnd?.(url);

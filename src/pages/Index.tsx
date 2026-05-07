@@ -93,7 +93,8 @@ export default function Index() {
   const [transparent, setTransparent] = useState(false);
   const [format, setFormat] = useState(FORMATS[0]);
   const [animMode, setAnimMode] = useState<AnimMode>("handwriting");
-  const [animSpeed, setAnimSpeed] = useState(80);
+  const [animSpeed, setAnimSpeed] = useState(6);   // pointsPerFrame 1..50
+  const [smoothness, setSmoothness] = useState(18); // шаг Безье 4..32
   const [isAnimating, setIsAnimating] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [showManualEditor, setShowManualEditor] = useState(false);
@@ -139,11 +140,11 @@ export default function Index() {
     };
 
     if (animMode === "typewriter") {
-      animateTypewriter({ ...common, charDelayMs: animSpeed });
+      animateTypewriter({ ...common, charDelayMs: Math.max(400 - animSpeed * 6, 20) });
     } else {
-      animateHandwriting({ ...common, speedMs: animSpeed });
+      animateHandwriting({ ...common, pointsPerFrame: animSpeed, smoothness });
     }
-  }, [loadedFont, text, fontSize, fontColor, bgColor, transparent, animMode, animSpeed, animateHandwriting, animateTypewriter, stopAll]);
+  }, [loadedFont, text, fontSize, fontColor, bgColor, transparent, animMode, animSpeed, smoothness, animateHandwriting, animateTypewriter, stopAll]);
 
   const handleExport = useCallback(() => {
     if (!canvasRef.current || !loadedFont || !text.trim()) return;
@@ -153,7 +154,7 @@ export default function Index() {
       return;
     }
     startRecording({
-      canvas: canvasRef.current, fps: 30,
+      canvas: canvasRef.current, fps: 30, transparent,
       onStart: () => setIsRecording(true),
       onEnd: () => setIsRecording(false),
       onError: (msg) => alert(msg),
@@ -274,9 +275,16 @@ export default function Index() {
           </div>
 
           <div className="mt-3">
-            <Row label="Скорость" value={animSpeed < 40 ? "Быстро" : animSpeed < 100 ? "Средне" : "Медленно"}>
-              <input type="range" min={5} max={200} value={animSpeed}
+            <Row label="Скорость" value={animSpeed <= 3 ? "Медленно" : animSpeed <= 10 ? "Средне" : animSpeed <= 25 ? "Быстро" : "Очень быстро"}>
+              <input type="range" min={1} max={40} value={animSpeed}
                 onChange={e => setAnimSpeed(Number(e.target.value))}
+                className="w-full" style={{ accentColor: "#7eb8f7" }} />
+            </Row>
+          </div>
+          <div className="mt-2">
+            <Row label="Плавность" value={smoothness <= 8 ? "Угловато" : smoothness <= 18 ? "Нормально" : "Плавно"}>
+              <input type="range" min={4} max={32} value={smoothness}
+                onChange={e => setSmoothness(Number(e.target.value))}
                 className="w-full" style={{ accentColor: "#7eb8f7" }} />
             </Row>
           </div>
@@ -371,7 +379,7 @@ export default function Index() {
             }}
           >
             <Icon name={isRecording ? "Square" : "Download"} size={14} />
-            {isRecording ? "● Остановить и сохранить MP4" : "Экспорт в MP4"}
+            {isRecording ? "● Остановить и сохранить" : transparent ? "Экспорт WebM (прозрачный)" : "Экспорт MP4"}
           </button>
           {isRecording && (
             <p className="text-xs mt-1.5 text-center" style={{ color: "#e06c75" }}>
@@ -463,24 +471,42 @@ export default function Index() {
               </div>
             ) : (
               <div className="flex flex-col items-center gap-3">
-                <div style={{ position: "relative", boxShadow: "0 20px 60px rgba(0,0,0,0.8)" }}>
+                <div style={{ position: "relative", boxShadow: "0 20px 60px rgba(0,0,0,0.9)" }}>
+                  {/* Шахматный фон при прозрачности — только в превью, не пишется в canvas */}
                   {transparent && (
                     <div style={{
-                      position: "absolute", inset: 0, zIndex: 0, borderRadius: 2,
-                      backgroundImage: "linear-gradient(45deg,#1e1e1e 25%,transparent 25%,transparent 75%,#1e1e1e 75%),linear-gradient(45deg,#1e1e1e 25%,#141414 25%,#141414 75%,#1e1e1e 75%)",
-                      backgroundSize: "16px 16px", backgroundPosition: "0 0,8px 8px",
+                      position: "absolute", inset: 0, zIndex: 0,
+                      borderRadius: 2,
+                      border: "1.5px dashed #3a3a3a",
+                      backgroundImage:
+                        "linear-gradient(45deg,#2a2a2a 25%,transparent 25%,transparent 75%,#2a2a2a 75%)," +
+                        "linear-gradient(45deg,#2a2a2a 25%,#1e1e1e 25%,#1e1e1e 75%,#2a2a2a 75%)",
+                      backgroundSize: "20px 20px",
+                      backgroundPosition: "0 0,10px 10px",
+                      transform: `scale(${previewScale})`,
+                      transformOrigin: "top center",
+                      width: format.w,
+                      height: format.h,
                     }} />
                   )}
                   <canvas ref={canvasRef} width={format.w} height={format.h}
                     style={{
-                      display: "block", position: "relative", zIndex: 1, borderRadius: 2,
-                      transform: `scale(${previewScale})`, transformOrigin: "top center",
+                      display: "block", position: "relative", zIndex: 1,
+                      borderRadius: 2,
+                      border: transparent ? "none" : "none",
+                      transform: `scale(${previewScale})`,
+                      transformOrigin: "top center",
                       width: format.w, height: format.h,
                     }} />
                 </div>
+                {transparent && (
+                  <p style={{ fontSize: 11, color: "#4a4a4a" }}>
+                    Клетчатый фон — только превью, в видео будет прозрачность
+                  </p>
+                )}
                 <p style={{
                   color: "#2a2a2a", fontSize: 11,
-                  marginTop: Math.round((previewScale - 1) * format.h) + 8,
+                  marginTop: Math.round((previewScale - 1) * format.h) + (transparent ? 0 : 8),
                 }}>
                   {format.w} × {format.h} px · {format.label}
                 </p>
