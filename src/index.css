@@ -2,58 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&family=IBM+Plex+Mono:wght@300;400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap");
 
 @layer base {
   :root {
-    --background: 0 0% 6%;
+    --background: 0 0% 4%;
     --foreground: 0 0% 90%;
-
-    --card: 0 0% 9%;
+    --card: 0 0% 7%;
     --card-foreground: 0 0% 90%;
-
-    --popover: 0 0% 9%;
+    --popover: 0 0% 7%;
     --popover-foreground: 0 0% 90%;
-
     --primary: 0 0% 90%;
-    --primary-foreground: 0 0% 6%;
-
-    --secondary: 0 0% 12%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 10%;
     --secondary-foreground: 0 0% 70%;
-
-    --muted: 0 0% 12%;
-    --muted-foreground: 0 0% 45%;
-
-    --accent: 0 0% 15%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 40%;
+    --accent: 0 0% 12%;
     --accent-foreground: 0 0% 90%;
-
     --destructive: 0 70% 50%;
     --destructive-foreground: 0 0% 98%;
-
-    --border: 0 0% 14%;
-    --input: 0 0% 14%;
-    --ring: 0 0% 60%;
-
+    --border: 0 0% 11%;
+    --input: 0 0% 11%;
+    --ring: 0 0% 50%;
     --radius: 3px;
-
-    --editor-bg: #0f0f0f;
-    --panel-bg: #111111;
-    --surface: #181818;
-    --surface-hover: #1f1f1f;
-    --line: #222222;
-    --text-dim: #555555;
-    --text-mid: #888888;
-    --text-main: #e5e5e5;
-    --accent-glow: #ffffff18;
-
-    --sidebar-background: 0 0% 8%;
+    --sidebar-background: 0 0% 7%;
     --sidebar-foreground: 0 0% 70%;
     --sidebar-primary: 0 0% 90%;
-    --sidebar-primary-foreground: 0 0% 6%;
-    --sidebar-accent: 0 0% 12%;
+    --sidebar-primary-foreground: 0 0% 4%;
+    --sidebar-accent: 0 0% 10%;
     --sidebar-accent-foreground: 0 0% 90%;
-    --sidebar-border: 0 0% 14%;
-    --sidebar-ring: 0 0% 60%;
+    --sidebar-border: 0 0% 11%;
+    --sidebar-ring: 0 0% 50%;
   }
 }
 
@@ -62,17 +42,14 @@
     @apply border-border;
     box-sizing: border-box;
   }
-
   body {
     @apply bg-background text-foreground;
     font-family: "IBM Plex Sans", sans-serif;
     font-size: 13px;
-    line-height: 1.5;
     overflow: hidden;
     height: 100vh;
     width: 100vw;
   }
-
   #root {
     height: 100vh;
     width: 100vw;
@@ -83,18 +60,36 @@
     width: 4px;
     height: 4px;
   }
-
   ::-webkit-scrollbar-track {
     background: transparent;
   }
-
   ::-webkit-scrollbar-thumb {
-    background: var(--line);
+    background: #222;
     border-radius: 2px;
   }
-
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--text-dim);
+    background: #333;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    height: 3px;
+    background: #222;
+    border-radius: 2px;
+    outline: none;
+    width: 100%;
+    display: block;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #7eb8f7;
+    cursor: pointer;
+  }
+  input[type="color"] {
+    cursor: pointer;
   }
 }
 
@@ -104,15 +99,13 @@
   }
 
   .animate-fade-in {
-    animation: fadeIn 0.25s ease forwards;
+    animation: fadeIn 0.2s ease forwards;
   }
-
   .animate-slide-in-right {
-    animation: slideInRight 0.25s ease forwards;
+    animation: slideInRight 0.2s ease forwards;
   }
-
   .animate-scale-in {
-    animation: scaleIn 0.2s ease forwards;
+    animation: scaleIn 0.18s ease forwards;
   }
 
   @keyframes fadeIn {
@@ -125,7 +118,6 @@
       transform: translateY(0);
     }
   }
-
   @keyframes slideInRight {
     from {
       opacity: 0;
@@ -136,7 +128,6 @@
       transform: translateX(0);
     }
   }
-
   @keyframes scaleIn {
     from {
       opacity: 0;
@@ -146,111 +137,5 @@
       opacity: 1;
       transform: scale(1);
     }
-  }
-
-  .glass {
-    background: rgba(255, 255, 255, 0.03);
-    backdrop-filter: blur(8px);
-    border: 1px solid var(--line);
-  }
-
-  .tool-btn {
-    @apply flex items-center justify-center w-8 h-8 rounded transition-all duration-150 cursor-pointer;
-    color: var(--text-dim);
-  }
-
-  .tool-btn:hover {
-    background: var(--surface-hover);
-    color: var(--text-main);
-  }
-
-  .tool-btn.active {
-    background: var(--surface);
-    color: var(--text-main);
-    border: 1px solid var(--line);
-  }
-
-  .panel-tab {
-    @apply px-3 py-1.5 text-xs cursor-pointer transition-all duration-150 relative;
-    color: var(--text-dim);
-    font-weight: 400;
-    letter-spacing: 0.02em;
-  }
-
-  .panel-tab:hover {
-    color: var(--text-mid);
-  }
-
-  .panel-tab.active {
-    color: var(--text-main);
-  }
-
-  .panel-tab.active::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 12px;
-    right: 12px;
-    height: 1px;
-    background: var(--text-main);
-  }
-
-  .editor-line {
-    @apply relative flex items-start gap-3 px-4 py-0.5;
-    min-height: 22px;
-    font-family: "IBM Plex Mono", monospace;
-    font-size: 12.5px;
-    line-height: 22px;
-  }
-
-  .editor-line:hover {
-    background: rgba(255, 255, 255, 0.015);
-  }
-
-  .line-num {
-    color: var(--text-dim);
-    font-size: 11px;
-    min-width: 28px;
-    text-align: right;
-    user-select: none;
-    padding-top: 1px;
-  }
-
-  .keyword {
-    color: #7eb8f7;
-  }
-  .string {
-    color: #a8d8a8;
-  }
-  .comment {
-    color: #505050;
-    font-style: italic;
-  }
-  .fn-name {
-    color: #e5c07b;
-  }
-  .number {
-    color: #d19a66;
-  }
-  .operator {
-    color: #888888;
-  }
-  .tag {
-    color: #e06c75;
-  }
-  .attr {
-    color: #d19a66;
-  }
-
-  .status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-dim);
-  }
-
-  .status-dot.active {
-    background: #4ade80;
-    box-shadow: 0 0 6px #4ade8066;
   }
 }
