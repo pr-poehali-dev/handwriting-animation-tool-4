@@ -8,9 +8,9 @@ import ManualAnimEditor from "@/components/ManualAnimEditor";
 import * as opentype from "opentype.js";
 
 const FORMATS = [
-  { id: "16:9", label: "16:9", w: 1280, h: 720 },
-  { id: "9:16", label: "9:16", w: 720, h: 1280 },
-  { id: "4:3", label: "4:3", w: 1024, h: 768 },
+  { id: "16:9", label: "16:9", w: 1920, h: 1080 },
+  { id: "9:16", label: "9:16", w: 1080, h: 1920 },
+  { id: "4:3", label: "4:3", w: 1440, h: 1080 },
   { id: "fullhd", label: "Full HD", w: 1920, h: 1080 },
 ];
 
@@ -26,6 +26,17 @@ const PRESET_BG = ["#ffffff", "#f5f5f5", "#000000", "#0f0f0f", "#1a1a2e", "#f0e6
 
 interface ManualCharData { char: string; strokes: { x: number; y: number }[][]; }
 
+/** Считает ширину строки в пикселях через font metrics */
+function measureLine(font: opentype.Font, line: string, fontSize: number): number {
+  const scale = fontSize / font.unitsPerEm;
+  let w = 0;
+  for (const ch of line) {
+    if (ch === " ") { w += (font.charToGlyph(" ").advanceWidth || fontSize * 0.3) * scale; continue; }
+    w += (font.charToGlyph(ch).advanceWidth || 0) * scale;
+  }
+  return w;
+}
+
 function drawStaticText(
   canvas: HTMLCanvasElement,
   font: opentype.Font,
@@ -34,6 +45,9 @@ function drawStaticText(
   color: string,
   bgColor: string,
   transparent: boolean,
+  textAlign: "left" | "center" | "right" = "left",
+  bold = false,
+  italic = false,
 ) {
   const ctx = canvas.getContext("2d")!;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -44,7 +58,8 @@ function drawStaticText(
   if (!text) return;
 
   const scale = fontSize / font.unitsPerEm;
-  const maxWidth = canvas.width - 40;
+  const padding = 20;
+  const maxWidth = canvas.width - padding * 2;
   const lineHeight = fontSize * 1.4;
   const lines: string[] = [];
   let currentLine = "";
@@ -62,16 +77,46 @@ function drawStaticText(
   }
   lines.push(currentLine);
 
-  let ly = fontSize + 20;
+  let ly = fontSize + padding;
   for (const line of lines) {
-    let lx = 20;
+    const lineW = measureLine(font, line, fontSize);
+    let lx = padding;
+    if (textAlign === "center") lx = (canvas.width - lineW) / 2;
+    else if (textAlign === "right") lx = canvas.width - padding - lineW;
+
     for (const char of line) {
-      if (char === " ") { lx += fontSize * 0.3; continue; }
-      const p = font.getPath(char, lx, ly, fontSize);
+      if (char === " ") { lx += (font.charToGlyph(" ").advanceWidth || fontSize * 0.3) * scale; continue; }
+      ctx.save();
+      if (italic) {
+        // Наклон 12° через shear-трансформацию
+        ctx.transform(1, 0, -0.21, 1, lx * 0.21, 0);
+      }
+      const drawX = italic ? 0 : lx;
+      const p = font.getPath(char, drawX, ly, fontSize);
       p.fill = color;
       p.draw(ctx);
-      const glyph = font.charToGlyph(char);
-      lx += (glyph.advanceWidth || 0) * scale;
+      if (bold) {
+        // Эмуляция жирности через stroke поверх fill
+        const p2 = font.getPath(char, drawX, ly, fontSize);
+        p2.fill = null;
+        p2.stroke = color;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = fontSize / 18;
+        ctx.lineJoin = "round";
+        const path2d = new Path2D();
+        for (const cmd of p2.commands) {
+          if (cmd.type === "M") path2d.moveTo(cmd.x, cmd.y);
+          else if (cmd.type === "L") path2d.lineTo(cmd.x, cmd.y);
+          else if (cmd.type === "C") path2d.bezierCurveTo(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
+          else if (cmd.type === "Q") path2d.quadraticCurveTo(cmd.x1, cmd.y1, cmd.x, cmd.y);
+          else if (cmd.type === "Z") path2d.closePath();
+        }
+        ctx.stroke(path2d);
+        ctx.restore();
+      }
+      ctx.restore();
+      lx += (font.charToGlyph(char).advanceWidth || 0) * scale;
     }
     ly += lineHeight;
   }
@@ -105,18 +150,12 @@ export default function Index() {
 
   useEffect(() => {
     if (!loadedFont || !canvasRef.current || isAnimating) return;
-    drawStaticText(canvasRef.current, loadedFont.font, text, fontSize, fontColor, bgColor, transparent);
-  }, [text, fontSize, fontColor, bgColor, transparent, loadedFont, isAnimating]);
+    drawStaticText(canvasRef.current, loadedFont.font, text, fontSize, fontColor, bgColor, transparent, textAlign, fontWeight === 700, fontStyle === "italic");
+  }, [text, fontSize, fontColor, bgColor, transparent, loadedFont, isAnimating, textAlign, fontWeight, fontStyle]);
 
   useEffect(() => {
-    if (!canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d")!;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!transparent) { ctx.fillStyle = bgColor; ctx.fillRect(0, 0, canvas.width, canvas.height); }
-    if (loadedFont && text) {
-      drawStaticText(canvas, loadedFont.font, text, fontSize, fontColor, bgColor, transparent);
-    }
+    if (!canvasRef.current || !loadedFont) return;
+    drawStaticText(canvasRef.current, loadedFont.font, text, fontSize, fontColor, bgColor, transparent, textAlign, fontWeight === 700, fontStyle === "italic");
   }, [format]);
 
   const stopAll = useCallback(() => {
@@ -142,9 +181,14 @@ export default function Index() {
     if (animMode === "typewriter") {
       animateTypewriter({ ...common, charDelayMs: Math.max(400 - animSpeed * 6, 20) });
     } else {
-      animateHandwriting({ ...common, pointsPerFrame: animSpeed, smoothness });
+      animateHandwriting({
+        ...common,
+        pointsPerFrame: animSpeed,
+        smoothness,
+        manualData: animMode === "manual" ? manualData : undefined,
+      });
     }
-  }, [loadedFont, text, fontSize, fontColor, bgColor, transparent, animMode, animSpeed, smoothness, animateHandwriting, animateTypewriter, stopAll]);
+  }, [loadedFont, text, fontSize, fontColor, bgColor, transparent, animMode, animSpeed, smoothness, manualData, animateHandwriting, animateTypewriter, stopAll]);
 
   const handleExport = useCallback(() => {
     if (!canvasRef.current || !loadedFont || !text.trim()) return;
@@ -253,26 +297,47 @@ export default function Index() {
         {/* ── АНИМАЦИЯ ── */}
         <PanelSection title="Тип анимации">
           <div className="flex flex-col gap-1.5">
-            {ANIM_MODES.map(m => (
-              <button
-                key={m.id}
-                onClick={() => m.id === "manual" ? setShowManualEditor(true) : setAnimMode(m.id)}
-                className="w-full px-3 py-2.5 rounded flex items-center gap-2.5 text-xs transition-all"
-                style={{
-                  background: animMode === m.id && m.id !== "manual" ? "#1a2030" : "#161616",
-                  border: `1px solid ${animMode === m.id && m.id !== "manual" ? "#2a4060" : "#1e1e1e"}`,
-                  color: animMode === m.id && m.id !== "manual" ? "#7eb8f7" : "#666",
-                  textAlign: "left",
-                }}
-              >
-                <Icon name={m.icon} size={14} />
-                <span>{m.label}</span>
-                {m.id === "manual" && manualData.length > 0 && (
-                  <span className="ml-auto" style={{ color: "#4ade80" }}>{manualData.length} симв.</span>
-                )}
-              </button>
-            ))}
+            {ANIM_MODES.map(m => {
+              const isActive = animMode === m.id;
+              const isManual = m.id === "manual";
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => {
+                    setAnimMode(m.id);
+                    if (isManual) setShowManualEditor(true);
+                  }}
+                  className="w-full px-3 py-2.5 rounded flex items-center gap-2.5 text-xs transition-all"
+                  style={{
+                    background: isActive ? "#1a2030" : "#161616",
+                    border: `1px solid ${isActive ? "#2a4060" : "#1e1e1e"}`,
+                    color: isActive ? "#7eb8f7" : "#666",
+                    textAlign: "left",
+                  }}
+                >
+                  <Icon name={m.icon} size={14} />
+                  <span>{m.label}</span>
+                  {isManual && manualData.length > 0 && (
+                    <span className="ml-auto text-xs" style={{ color: "#4ade80" }}>
+                      {manualData.length} симв.
+                    </span>
+                  )}
+                  {isManual && isActive && manualData.length === 0 && (
+                    <span className="ml-auto text-xs" style={{ color: "#e06c75" }}>настрой →</span>
+                  )}
+                </button>
+              );
+            })}
           </div>
+          {animMode === "manual" && manualData.length > 0 && (
+            <button
+              onClick={() => setShowManualEditor(true)}
+              className="w-full mt-1.5 py-1.5 rounded text-xs transition-all flex items-center justify-center gap-1.5"
+              style={{ background: "#161616", border: "1px solid #1e1e1e", color: "#555" }}
+            >
+              <Icon name="Pencil" size={12} /> Редактировать настройки
+            </button>
+          )}
 
           <div className="mt-3">
             <Row label="Скорость" value={animSpeed <= 3 ? "Медленно" : animSpeed <= 10 ? "Средне" : animSpeed <= 25 ? "Быстро" : "Очень быстро"}>

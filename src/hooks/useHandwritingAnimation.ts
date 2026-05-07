@@ -1,59 +1,17 @@
 import { useCallback, useRef } from "react";
 import * as opentype from "opentype.js";
 
-// Кубическая кривая Безье
-function cubicBezier(t: number, p0: number, p1: number, p2: number, p3: number) {
-  const u = 1 - t;
-  return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
-}
-
-function quadBezier(t: number, p0: number, p1: number, p2: number) {
-  const u = 1 - t;
-  return u * u * p0 + 2 * u * t * p1 + t * t * p2;
-}
-
-// Разворачиваем путь opentype в массив точек
-function flattenPath(path: opentype.Path, steps = 24): { x: number; y: number }[][] {
-  const contours: { x: number; y: number }[][] = [];
-  let current: { x: number; y: number }[] = [];
-  let px = 0, py = 0;
-
+/** Строит Path2D из команд opentype.Path */
+function buildPath2D(path: opentype.Path): Path2D {
+  const p2d = new Path2D();
   for (const cmd of path.commands) {
-    if (cmd.type === "M") {
-      if (current.length > 1) contours.push(current);
-      current = [{ x: cmd.x, y: cmd.y }];
-      px = cmd.x; py = cmd.y;
-    } else if (cmd.type === "L") {
-      current.push({ x: cmd.x, y: cmd.y });
-      px = cmd.x; py = cmd.y;
-    } else if (cmd.type === "C") {
-      for (let i = 1; i <= steps; i++) {
-        const t = i / steps;
-        current.push({
-          x: cubicBezier(t, px, cmd.x1, cmd.x2, cmd.x),
-          y: cubicBezier(t, py, cmd.y1, cmd.y2, cmd.y),
-        });
-      }
-      px = cmd.x; py = cmd.y;
-    } else if (cmd.type === "Q") {
-      for (let i = 1; i <= steps; i++) {
-        const t = i / steps;
-        current.push({
-          x: quadBezier(t, px, cmd.x1, cmd.x),
-          y: quadBezier(t, py, cmd.y1, cmd.y),
-        });
-      }
-      px = cmd.x; py = cmd.y;
-    } else if (cmd.type === "Z") {
-      if (current.length > 1) {
-        current.push({ ...current[0] }); // замкнуть
-        contours.push(current);
-      }
-      current = [];
-    }
+    if (cmd.type === "M") p2d.moveTo(cmd.x, cmd.y);
+    else if (cmd.type === "L") p2d.lineTo(cmd.x, cmd.y);
+    else if (cmd.type === "C") p2d.bezierCurveTo(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y);
+    else if (cmd.type === "Q") p2d.quadraticCurveTo(cmd.x1, cmd.y1, cmd.x, cmd.y);
+    else if (cmd.type === "Z") p2d.closePath();
   }
-  if (current.length > 1) contours.push(current);
-  return contours;
+  return p2d;
 }
 
 export interface AnimationOptions {
@@ -64,20 +22,47 @@ export interface AnimationOptions {
   color: string;
   bgColor: string;
   transparent: boolean;
-  /** Количество точек Безье в кадре (скорость) — 1..50, по умолчанию 6 */
+  /** Пикселей в кадре (скорость): 1..80 */
   pointsPerFrame: number;
-  /** Плавность — шаг разбивки кривых (4..32), влияет на гладкость */
+  /** Не используется в этой реализации, оставлен для совместимости */
   smoothness: number;
+  /** Данные ручной настройки (если есть) */
+  manualData?: { char: string; strokes: { x: number; y: number }[][] }[];
   onComplete?: () => void;
   onProgress?: (charIndex: number) => void;
 }
 
 interface CharEntry {
-  char: string;
-  /** Все контуры буквы в виде плоских точек */
-  contours: { x: number; y: number }[][];
-  /** Готовый путь opentype для финального fill-рендера */
   path: opentype.Path;
+  path2d: Path2D;
+  bb: { x1: number; y1: number; x2: number; y2: number };
+  /** Пути для ручной анимации (абс. координаты) */
+  manualStrokes?: { x: number; y: number }[][];
+  xOffset: number;
+  yOffset: number;
+}
+
+/** Разбивает текст на строки с автопереносом */
+function buildLines(
+  font: opentype.Font,
+  text: string,
+  fontSize: number,
+  maxWidth: number,
+): string[] {
+  const lines: string[] = [];
+  let cur = "";
+  for (const word of text.split(/(\s|\n)/)) {
+    if (word === "\n") { lines.push(cur); cur = ""; continue; }
+    const test = cur + word;
+    const bb = font.getPath(test, 0, 0, fontSize).getBoundingBox();
+    if (bb.x2 > maxWidth && cur.length > 0) {
+      lines.push(cur); cur = word;
+    } else {
+      cur = test;
+    }
+  }
+  lines.push(cur);
+  return lines;
 }
 
 export function useHandwritingAnimation() {
@@ -95,45 +80,57 @@ export function useHandwritingAnimation() {
 
     const {
       font, canvas, text, fontSize, color,
-      bgColor, transparent, pointsPerFrame, smoothness, onComplete, onProgress,
+      bgColor, transparent, pointsPerFrame, manualData,
+      onComplete, onProgress,
     } = opts;
 
     const ctx = canvas.getContext("2d")!;
     const scale = fontSize / font.unitsPerEm;
     const maxWidth = canvas.width - 40;
     const lineHeight = fontSize * 1.4;
+    const padding = 20;
 
-    // ── Разбиваем текст на строки ──
-    const lines: string[] = [];
-    let currentLine = "";
-    for (const word of text.split(/(\s|\n)/)) {
-      if (word === "\n") { lines.push(currentLine); currentLine = ""; continue; }
-      const test = currentLine + word;
-      const bb = font.getPath(test, 0, 0, fontSize).getBoundingBox();
-      if (bb.x2 > maxWidth && currentLine.length > 0) {
-        lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = test;
-      }
-    }
-    lines.push(currentLine);
-
-    // ── Собираем все символы ──
+    // ── Строим список символов ──
+    const lines = buildLines(font, text, fontSize, maxWidth);
     const chars: CharEntry[] = [];
-    let lineY = fontSize + 20;
+    let lineY = fontSize + padding;
 
     for (const line of lines) {
-      let lx = 20;
+      let lx = padding;
       for (const char of line) {
         if (char === " " || char === "\t") {
           lx += (font.charToGlyph(" ").advanceWidth || fontSize * 0.3) * scale;
           continue;
         }
         const path = font.getPath(char, lx, lineY, fontSize);
-        const contours = flattenPath(path, smoothness);
-        if (contours.length > 0) {
-          chars.push({ char, contours, path });
+        const path2d = buildPath2D(path);
+        const bb = path.getBoundingBox();
+
+        let manualStrokes: { x: number; y: number }[][] | undefined;
+        if (manualData) {
+          const found = manualData.find(d => d.char === char);
+          if (found && found.strokes.length > 0) {
+            // Нормализуем: штрихи из редактора рисовались при размере fontSize*1.5 и x=30, y=canvasH/2+...
+            // Применяем affine к текущей позиции буквы
+            const refFontSize = fontSize * 1.5;
+            const refX = 30;
+            const refY = 300 / 2 + refFontSize * 0.35; // 300 — высота канваса редактора
+            const srcPath = font.getPath(char, refX, refY, refFontSize);
+            const srcBB = srcPath.getBoundingBox();
+            const dstBB = bb;
+            const scaleXM = (dstBB.x2 - dstBB.x1) / Math.max(srcBB.x2 - srcBB.x1, 1);
+            const scaleYM = (dstBB.y2 - dstBB.y1) / Math.max(srcBB.y2 - srcBB.y1, 1);
+            manualStrokes = found.strokes.map(stroke =>
+              stroke.map(pt => ({
+                x: dstBB.x1 + (pt.x - srcBB.x1) * scaleXM,
+                y: dstBB.y1 + (pt.y - srcBB.y1) * scaleYM,
+              }))
+            );
+          }
+        }
+
+        if (bb.x2 > bb.x1 || bb.y2 > bb.y1) {
+          chars.push({ path, path2d, bb, manualStrokes, xOffset: lx, yOffset: lineY });
         }
         lx += (font.charToGlyph(char).advanceWidth || 0) * scale;
       }
@@ -142,7 +139,7 @@ export function useHandwritingAnimation() {
 
     if (chars.length === 0) { onComplete?.(); return; }
 
-    // ── Хелперы рисования ──
+    // ── Рисование фона ──
     const drawBg = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (!transparent) {
@@ -151,28 +148,28 @@ export function useHandwritingAnimation() {
       }
     };
 
-    // Рисует уже завершённый символ как fill (точный шрифт)
-    const drawFinishedChar = (ch: CharEntry) => {
-      ch.path.fill = color;
-      ch.path.stroke = null;
-      ch.path.draw(ctx);
+    // Рисует символ полностью (fill)
+    const drawFullChar = (ch: CharEntry) => {
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.fill(ch.path2d, "evenodd");
+      ctx.restore();
     };
 
-    // ── Состояние анимации ──
+    // ── Анимация ──
     const finishedChars: CharEntry[] = [];
     let charIdx = 0;
-    let contourIdx = 0;
-    const ptIdx = 0;
 
-    // Смещение внутри текущего контура (сколько точек уже нарисовано)
-    let drawnPts = 0;
+    // Для clip-reveal (авто): прогресс X слева направо по bbox символа
+    let revealX = 0;
 
-    const redrawScene = () => {
+    // Для ручной анимации: индекс штриха и точки
+    let manualStrokeIdx = 0;
+    let manualPtIdx = 0;
+
+    const redrawFinished = () => {
       drawBg();
-      // Рисуем все завершённые символы fill-ом (без изменения шрифта!)
-      for (const fc of finishedChars) {
-        drawFinishedChar(fc);
-      }
+      for (const fc of finishedChars) drawFullChar(fc);
     };
 
     const step = () => {
@@ -184,55 +181,86 @@ export function useHandwritingAnimation() {
       }
 
       const ch = chars[charIdx];
-      const contour = ch.contours[contourIdx];
 
-      // Двигаем указатель на pointsPerFrame точек вперёд
-      drawnPts = Math.min(drawnPts + pointsPerFrame, contour ? contour.length : 0);
+      // ── РУЧНАЯ анимация ──
+      if (ch.manualStrokes && ch.manualStrokes.length > 0) {
+        const strokes = ch.manualStrokes;
+        const stroke = strokes[manualStrokeIdx];
 
-      // Перерисовываем всё
-      redrawScene();
-
-      // Рисуем текущий контур до drawnPts — как stroke поверх
-      // Все уже завершённые контуры текущей буквы тоже рисуем stroke
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(fontSize / 28, 1.2);
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-
-      // Завершённые контуры текущей буквы (до contourIdx)
-      for (let ci = 0; ci < contourIdx; ci++) {
-        const c = ch.contours[ci];
-        if (c.length < 2) continue;
-        ctx.beginPath();
-        ctx.moveTo(c[0].x, c[0].y);
-        for (let i = 1; i < c.length; i++) ctx.lineTo(c[i].x, c[i].y);
-        ctx.stroke();
-      }
-
-      // Текущий контур до drawnPts
-      if (contour && drawnPts > 1) {
-        ctx.beginPath();
-        ctx.moveTo(contour[0].x, contour[0].y);
-        for (let i = 1; i < drawnPts; i++) ctx.lineTo(contour[i].x, contour[i].y);
-        ctx.stroke();
-      }
-
-      ctx.restore();
-
-      // Переход к следующей точке / контуру / символу
-      if (!contour || drawnPts >= contour.length) {
-        contourIdx++;
-        drawnPts = 0;
-
-        if (contourIdx >= ch.contours.length) {
-          // Символ завершён — добавляем в finishedChars как fill
+        if (!stroke) {
+          // Все штрихи завершены
           finishedChars.push(ch);
           onProgress?.(charIdx);
           charIdx++;
-          contourIdx = 0;
-          drawnPts = 0;
+          manualStrokeIdx = 0;
+          manualPtIdx = 0;
+          revealX = 0;
+          animRef.current = requestAnimationFrame(step);
+          return;
         }
+
+        manualPtIdx = Math.min(manualPtIdx + pointsPerFrame, stroke.length);
+
+        redrawFinished();
+
+        // Рисуем завершённые штрихи текущей буквы
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(fontSize / 22, 1.5);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        for (let si = 0; si < manualStrokeIdx; si++) {
+          const s = strokes[si];
+          if (s.length < 2) continue;
+          ctx.beginPath();
+          ctx.moveTo(s[0].x, s[0].y);
+          for (let i = 1; i < s.length; i++) ctx.lineTo(s[i].x, s[i].y);
+          ctx.stroke();
+        }
+        // Текущий штрих до manualPtIdx
+        if (stroke.length >= 2 && manualPtIdx > 1) {
+          ctx.beginPath();
+          ctx.moveTo(stroke[0].x, stroke[0].y);
+          for (let i = 1; i < manualPtIdx; i++) ctx.lineTo(stroke[i].x, stroke[i].y);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        if (manualPtIdx >= stroke.length) {
+          manualStrokeIdx++;
+          manualPtIdx = 0;
+        }
+
+        animRef.current = requestAnimationFrame(step);
+        return;
+      }
+
+      // ── АВТО анимация (clip-reveal слева направо) ──
+      const { bb } = ch;
+      const charWidth = Math.max(bb.x2 - bb.x1, 1);
+      // Добавляем небольшой запас чтобы правый край точно открылся
+      const totalWidth = charWidth + fontSize * 0.08;
+
+      revealX = Math.min(revealX + pointsPerFrame, totalWidth);
+
+      redrawFinished();
+
+      // Clip по форме буквы + рисуем прямоугольник раскрытия
+      ctx.save();
+      ctx.clip(ch.path2d, "evenodd");
+      ctx.fillStyle = color;
+      ctx.fillRect(bb.x1 - 2, bb.y1 - fontSize * 0.2, revealX + 2, (bb.y2 - bb.y1) + fontSize * 0.4);
+      ctx.restore();
+
+      if (revealX >= totalWidth) {
+        // Символ полностью открыт — записываем как fill
+        finishedChars.push(ch);
+        onProgress?.(charIdx);
+        charIdx++;
+        revealX = 0;
+        manualStrokeIdx = 0;
+        manualPtIdx = 0;
       }
 
       animRef.current = requestAnimationFrame(step);
